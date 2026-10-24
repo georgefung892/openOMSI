@@ -5,6 +5,7 @@ use objc2_foundation::{
     NSData, NSString, NSURL, NSURLBookmarkCreationOptions, NSURLBookmarkResolutionOptions,
     NSUserDefaults,
 };
+use omsi_launcher_lib::i18n::{tr, trf};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -17,13 +18,14 @@ fn stored() -> Result<BTreeMap<String, Vec<u8>>, String> {
     let defaults = NSUserDefaults::standardUserDefaults();
     match defaults.dataForKey(&NSString::from_str(BOOKMARKS)) {
         Some(data) => serde_json::from_slice(&data.to_vec())
-            .map_err(|e| format!("Cannot read data folder bookmarks: {e}")),
+            .map_err(|e| trf("Cannot read data folder bookmarks: {error}", &[("error", &e)])),
         None => Ok(BTreeMap::new()),
     }
 }
 
 fn save(bookmarks: &BTreeMap<String, Vec<u8>>) -> Result<(), String> {
-    let bytes = serde_json::to_vec(bookmarks).map_err(|e| e.to_string())?;
+    let bytes = serde_json::to_vec(bookmarks)
+        .map_err(|e| trf("Cannot save data folder bookmarks: {error}", &[("error", &e)]))?;
     let data = NSData::with_bytes(&bytes);
     // NSData is a property-list value. Preferences stay outside the movable .openomsi.
     unsafe {
@@ -40,7 +42,7 @@ fn bookmark(url: &NSURL) -> Result<Vec<u8>, String> {
         None,
     )
     .map(|data| data.to_vec())
-    .map_err(|e| format!("Cannot preserve data folder permission: {e}"))
+    .map_err(|e| trf("Cannot preserve data folder permission: {error}", &[("error", &e)]))
 }
 
 fn activate(bytes: &[u8]) -> Result<(Retained<NSURL>, bool), String> {
@@ -55,23 +57,29 @@ fn activate(bytes: &[u8]) -> Result<(Retained<NSURL>, bool), String> {
             &mut stale,
         )
     }
-    .map_err(|e| format!("Cannot restore data folder permission: {e}"))?;
+    .map_err(|e| trf("Cannot restore data folder permission: {error}", &[("error", &e)]))?;
     let path = url
         .to_file_path()
-        .ok_or("The data folder bookmark is not a file URL")?;
+        .ok_or_else(|| tr("The data folder bookmark is not a file URL"))?;
     let key = path
         .to_str()
-        .ok_or("The data folder path must be valid UTF-8")?
+        .ok_or_else(|| tr("The data folder path must be valid UTF-8"))?
         .to_owned();
-    let mut access = ACCESS.lock().map_err(|e| e.to_string())?;
+    let mut access = ACCESS
+        .lock()
+        .map_err(|e| trf("Cannot lock data folder permissions: {error}", &[("error", &e)]))?;
     if !access.contains_key(&key) {
         // A non-sandboxed build may already have access and return false. Never treat
         // the panel itself as proof of durable permission: resolving a bookmark and
         // starting its scope is required; check actual access if no scope was started.
         let started = unsafe { url.startAccessingSecurityScopedResource() };
         if !started {
-            std::fs::read_dir(&path)
-                .map_err(|e| format!("Cannot access {}: {e}", path.display()))?;
+            std::fs::read_dir(&path).map_err(|e| {
+                trf(
+                    "Cannot access {path}: {error}",
+                    &[("path", &path.display()), ("error", &e)],
+                )
+            })?;
         } else {
             access.insert(key, url.clone());
         }
@@ -91,21 +99,21 @@ fn comparable(path: &Path) -> PathBuf {
 }
 
 pub fn pick(requested: Option<PathBuf>) -> Result<Option<PathBuf>, String> {
-    let mtm =
-        MainThreadMarker::new().ok_or("The data folder picker must run on the main thread")?;
+    let mtm = MainThreadMarker::new()
+        .ok_or_else(|| tr("The data folder picker must run on the main thread"))?;
     let panel = NSOpenPanel::openPanel(mtm);
     panel.setCanChooseDirectories(true);
     panel.setCanChooseFiles(false);
     panel.setAllowsMultipleSelection(false);
     panel.setCanCreateDirectories(true);
     panel.setShowsHiddenFiles(true);
-    panel.setTitle(Some(&NSString::from_str(
+    panel.setTitle(Some(&NSString::from_str(&tr(
         "Choose .openomsi or its parent folder",
-    )));
+    ))));
     if let Some(target) = &requested {
-        let message = format!(
-            "Allow openOMSI to use {}. Select that existing .openomsi folder or its direct parent.",
-            target.display()
+        let message = trf(
+            "Allow openOMSI to use {path}. Select that existing .openomsi folder or its direct parent.",
+            &[("path", &target.display())],
         );
         panel.setMessage(Some(&NSString::from_str(&message)));
         if let Some(parent) = target.parent() {
@@ -117,10 +125,10 @@ pub fn pick(requested: Option<PathBuf>) -> Result<Option<PathBuf>, String> {
     if panel.runModal() != NSModalResponseOK {
         return Ok(None);
     }
-    let url = panel.URL().ok_or("No data folder was selected")?;
+    let url = panel.URL().ok_or_else(|| tr("No data folder was selected"))?;
     let selected = url
         .to_file_path()
-        .ok_or("The selected folder is not a file URL")?;
+        .ok_or_else(|| tr("The selected folder is not a file URL"))?;
     let target = match requested {
         Some(target) => {
             let selected = comparable(&selected);
@@ -129,9 +137,9 @@ pub fn pick(requested: Option<PathBuf>) -> Result<Option<PathBuf>, String> {
                     .parent()
                     .is_none_or(|parent| selected != comparable(parent))
             {
-                return Err(format!(
-                    "Select {} or its direct parent folder",
-                    target.display()
+                return Err(trf(
+                    "Select {path} or its direct parent folder",
+                    &[("path", &target.display())],
                 ));
             }
             target
@@ -148,7 +156,7 @@ pub fn pick(requested: Option<PathBuf>) -> Result<Option<PathBuf>, String> {
     let (active, _) = activate(&bytes)?;
     let selected = active
         .to_file_path()
-        .ok_or("The selected folder is not a file URL")?;
+        .ok_or_else(|| tr("The selected folder is not a file URL"))?;
     bookmarks.insert(selected.to_string_lossy().into_owned(), bytes);
     save(&bookmarks)?;
     Ok(Some(target))

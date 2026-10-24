@@ -1,5 +1,6 @@
 //! Native authorization is separate from saving settings or moving user data.
 
+use omsi_launcher_lib::i18n::tr;
 use std::path::{Component, Path, PathBuf};
 
 #[cfg(target_os = "macos")]
@@ -7,7 +8,7 @@ mod macos;
 
 fn normalize(path: &Path) -> Result<PathBuf, String> {
     if !path.is_absolute() {
-        return Err("Choose an absolute data folder path".into());
+        return Err(tr("Choose an absolute data folder path"));
     }
     let mut target = PathBuf::new();
     for component in path.components() {
@@ -24,9 +25,9 @@ fn normalize(path: &Path) -> Result<PathBuf, String> {
     }
     let text = target
         .to_str()
-        .ok_or("The data folder path must be valid UTF-8")?;
+        .ok_or_else(|| tr("The data folder path must be valid UTF-8"))?;
     if text.contains(['\0', '\n', '\r']) {
-        return Err("The data folder path contains an invalid character".into());
+        return Err(tr("The data folder path contains an invalid character"));
     }
     Ok(target)
 }
@@ -41,7 +42,7 @@ pub fn pick(path: Option<String>) -> Result<Option<String>, String> {
     #[cfg(not(target_os = "macos"))]
     let target = match requested {
         Some(target) => Some(target),
-        None => omsi_launcher_lib::pick_folder("Choose .openomsi or its parent folder")
+        None => omsi_launcher_lib::pick_folder(&tr("Choose .openomsi or its parent folder"))
             .map(|path| normalize(&path))
             .transpose()?,
     };
@@ -49,7 +50,7 @@ pub fn pick(path: Option<String>) -> Result<Option<String>, String> {
         .map(|path| {
             path.into_os_string()
                 .into_string()
-                .map_err(|_| "The data folder path must be valid UTF-8".into())
+                .map_err(|_| tr("The data folder path must be valid UTF-8"))
         })
         .transpose()
 }

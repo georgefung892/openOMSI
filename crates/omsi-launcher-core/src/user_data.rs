@@ -16,7 +16,7 @@ fn copy_tree_contents(source: &Path, target: &Path) -> Result<()> {
         let kind = entry.file_type()?;
         let to = target.join(entry.file_name());
         if kind.is_symlink() {
-            bail!("Cannot move a data folder containing symbolic links: {}", entry.path().display());
+            bail!(crate::i18n::trf("Cannot move a data folder containing symbolic links: {path}", &[("path", &entry.path().display())]));
         } else if kind.is_dir() {
             std::fs::create_dir(&to)?;
             copy_tree_contents(&entry.path(), &to)?;
@@ -31,19 +31,19 @@ fn validate_destination(source: &Path, target: &Path) -> Result<()> {
     omsi_cfg::user_data::validate_path(target)?;
     if source == target { return Ok(()); }
     // Canonicalize the existing parent as well, so symlinked parents cannot nest a copy.
-    let mut ancestor = target.parent().context("The data folder needs a parent")?;
+    let mut ancestor = target.parent().context(crate::i18n::tr("The data folder needs a parent"))?;
     while !ancestor.exists() {
-        ancestor = ancestor.parent().context("The data folder needs an existing ancestor")?;
+        ancestor = ancestor.parent().context(crate::i18n::tr("The data folder needs an existing ancestor"))?;
     }
     let canonical_source = source.canonicalize()?;
     if target.exists() {
         let canonical_target = target.canonicalize()?;
         if canonical_target.starts_with(&canonical_source) || canonical_source.starts_with(&canonical_target) {
-            bail!("The new .openomsi folder cannot contain or be inside the current folder");
+            bail!(crate::i18n::tr("The new .openomsi folder cannot contain or be inside the current folder"));
         }
     }
     if ancestor.canonicalize()?.starts_with(&canonical_source) || canonical_source.starts_with(target) {
-        bail!("The new .openomsi folder cannot contain or be inside the current folder");
+        bail!(crate::i18n::tr("The new .openomsi folder cannot contain or be inside the current folder"));
     }
     Ok(())
 }
@@ -51,7 +51,7 @@ fn validate_destination(source: &Path, target: &Path) -> Result<()> {
 fn prepare(source: &Path, target: &Path, move_current: bool) -> Result<()> {
     validate_destination(source, target)?;
     if target.exists() {
-        bail!("The destination already exists. Choose another location to avoid overwriting its data");
+        bail!(crate::i18n::tr("The destination already exists. Choose another location to avoid overwriting its data"));
     }
     std::fs::create_dir_all(target.parent().unwrap())?;
     // Only clean up a destination that this operation successfully claimed.
@@ -59,7 +59,7 @@ fn prepare(source: &Path, target: &Path, move_current: bool) -> Result<()> {
     if move_current {
         if let Err(e) = copy_tree_contents(source, target) {
             let _ = std::fs::remove_dir_all(target);
-            return Err(e).context("Could not copy the current .openomsi folder; the original is unchanged");
+            return Err(e).context(crate::i18n::tr("Could not copy the current .openomsi folder; the original is unchanged"));
         }
     }
     Ok(())
@@ -69,7 +69,7 @@ fn prepare(source: &Path, target: &Path, move_current: bool) -> Result<()> {
 fn prepare_overwrite(source: &Path, target: &Path) -> Result<PathBuf> {
     validate_destination(source, target)?;
     if !target.is_dir() || std::fs::symlink_metadata(target)?.file_type().is_symlink() {
-        bail!("The existing .openomsi destination must be a real directory");
+        bail!(crate::i18n::tr("The existing .openomsi destination must be a real directory"));
     }
     let unique = format!("{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos());
     let stage = target.with_file_name(format!(".openomsi-stage-{unique}"));
@@ -77,16 +77,16 @@ fn prepare_overwrite(source: &Path, target: &Path) -> Result<PathBuf> {
     std::fs::create_dir(&stage)?;
     if let Err(e) = copy_tree_contents(source, &stage) {
         let _ = std::fs::remove_dir_all(&stage);
-        return Err(e).context("Could not copy the current folder; the existing destination is unchanged");
+        return Err(e).context(crate::i18n::tr("Could not copy the current folder; the existing destination is unchanged"));
     }
     if let Err(e) = std::fs::rename(target, &backup) {
         let _ = std::fs::remove_dir_all(&stage);
-        return Err(e).context("Could not back up the existing destination");
+        return Err(e).context(crate::i18n::tr("Could not back up the existing destination"));
     }
     if let Err(e) = std::fs::rename(&stage, target) {
         let restored = std::fs::rename(&backup, target);
         let _ = std::fs::remove_dir_all(&stage);
-        if restored.is_err() { bail!("Could not replace the destination ({e}); its original data is preserved at {}", backup.display()); }
+        if restored.is_err() { bail!(crate::i18n::trf("Could not replace the destination ({error}); its original data is preserved at {path}", &[("error", &e), ("path", &backup.display())])); }
         return Err(e.into());
     }
     Ok(backup)
@@ -96,7 +96,7 @@ fn prepare_destination(source: &Path, target: &Path, mode: ChangeMode) -> Result
     match mode {
         ChangeMode::UseExisting => {
             validate_destination(source, target)?;
-            if !target.is_dir() { bail!("The existing .openomsi folder was not found"); }
+            if !target.is_dir() { bail!(crate::i18n::tr("The existing .openomsi folder was not found")); }
             Ok(None)
         }
         ChangeMode::Overwrite => prepare_overwrite(source, target).map(Some),
@@ -106,13 +106,13 @@ fn prepare_destination(source: &Path, target: &Path, mode: ChangeMode) -> Result
 
 pub fn change(path: &Path, mode: ChangeMode, game: &Path) -> Result<Option<String>> {
     if cfg!(any(target_os = "android", target_os = "ios")) {
-        bail!("Changing the .openomsi folder is only available on desktop");
+        bail!(crate::i18n::tr("Changing the .openomsi folder is only available on desktop"));
     }
     if crate::list_instances().iter().any(|i| i.running) {
-        bail!("Close running games before changing the .openomsi folder");
+        bail!(crate::i18n::tr("Close running games before changing the .openomsi folder"));
     }
     if crate::install::jobs().iter().any(|job| job.finished.is_none()) {
-        bail!("Wait for mod installations to finish before changing the .openomsi folder");
+        bail!(crate::i18n::tr("Wait for mod installations to finish before changing the .openomsi folder"));
     }
     let source = crate::data_dir();
     let target = selected_path(path);
@@ -121,13 +121,13 @@ pub fn change(path: &Path, mode: ChangeMode, game: &Path) -> Result<Option<Strin
     let canonical_source = source.canonicalize()?;
     if target.exists() && target.canonicalize()? == canonical_source { return Ok(None); }
     if matches!(mode, ChangeMode::Move | ChangeMode::Overwrite) && (game.canonicalize()?.starts_with(&canonical_source) || launcher.canonicalize()?.starts_with(&canonical_source)) {
-        bail!("Move the game program and launcher outside .openomsi before changing its location");
+        bail!(crate::i18n::tr("Move the game program and launcher outside .openomsi before changing its location"));
     }
     validate_destination(&source, &target)?;
     if mode == ChangeMode::Overwrite {
         let canonical_target = target.canonicalize()?;
         if game.canonicalize()?.starts_with(&canonical_target) || launcher.canonicalize()?.starts_with(&canonical_target) {
-            bail!("The destination contains the game program or launcher and cannot be overwritten");
+            bail!(crate::i18n::tr("The destination contains the game program or launcher and cannot be overwritten"));
         }
     }
     let game_config = omsi_cfg::user_data::config_file_for(game);
@@ -162,21 +162,21 @@ pub fn change(path: &Path, mode: ChangeMode, game: &Path) -> Result<Option<Strin
         if restored.is_ok() && mode != ChangeMode::UseExisting {
             if std::fs::remove_dir_all(&target).is_ok() {
                 if let Some(backup) = &backup {
-                    std::fs::rename(backup, &target).with_context(|| format!("The original destination is preserved at {}", backup.display()))?;
+                    std::fs::rename(backup, &target).with_context(|| crate::i18n::trf("The original destination is preserved at {path}", &[("path", &backup.display())]))?;
                 }
             }
         }
-        return Err(e).context("Could not save .openomsi-config; the original folder is unchanged");
+        return Err(e).context(crate::i18n::tr("Could not save .openomsi-config; the original folder is unchanged"));
     }
     let mut warnings = Vec::new();
     if matches!(mode, ChangeMode::Move | ChangeMode::Overwrite) {
         if let Err(e) = std::fs::remove_dir_all(&source) {
-            warnings.push(format!("The new folder is active, but the old copy at {} could not be removed: {e}", source.display()));
+            warnings.push(crate::i18n::trf("The new folder is active, but the old copy at {path} could not be removed: {error}", &[("path", &source.display()), ("error", &e)]));
         }
     }
     if let Some(backup) = backup {
         if let Err(e) = std::fs::remove_dir_all(&backup) {
-            warnings.push(format!("The destination was replaced, but its backup at {} could not be removed: {e}", backup.display()));
+            warnings.push(crate::i18n::trf("The destination was replaced, but its backup at {path} could not be removed: {error}", &[("path", &backup.display()), ("error", &e)]));
         }
     }
     Ok((!warnings.is_empty()).then(|| warnings.join("\n")))
